@@ -80,16 +80,20 @@
             </fieldset>
 
             <fieldset>
-                <legend>Fake TLS &amp; Cloudflare fallback</legend>
+                <legend>Domain Fronting &amp; Cloudflare fallback</legend>
+                <label><input name="fronting" type="checkbox" /> Использовать Domain Fronting (обход блокировок ТСПУ для *.web.telegram.org)</label>
+                <label>Fronting SNI
+                    <input name="fronting_sni" type="text" placeholder="sprinthost.ru" />
+                </label>
                 <label>Fake-TLS домен (SNI; пусто = выкл.)
                     <input name="fake_tls_domain" type="text" placeholder="example.com" />
                 </label>
                 <label><input name="cfproxy" type="checkbox" /> Использовать публичный пул CF-доменов</label>
-                <label>Пользовательский CF-домен
-                    <input name="cfproxy_user_domain" type="text" placeholder="my.example.com" />
+                <label>Пользовательские CF-домены (через запятую)
+                    <input name="cfproxy_user_domain" type="text" placeholder="my1.example.com, my2.example.com" />
                 </label>
-                <label>CF Worker домен
-                    <input name="cfproxy_worker_domain" type="text" placeholder="my-worker.workers.dev" />
+                <label>CF Worker домены (для загрузки медиа, через запятую)
+                    <input name="cfproxy_worker_domain" type="text" placeholder="worker1.workers.dev, worker2.workers.dev" />
                 </label>
             </fieldset>
 
@@ -115,7 +119,7 @@
             <fieldset>
                 <legend>Обновления</legend>
                 <label>GitHub-репозиторий
-                    <input name="update_repo" type="text" placeholder="Omn1z/tg-ws-keenetic" />
+                    <input name="update_repo" type="text" placeholder="EEFFRROO/tg-ws-keenetic" />
                 </label>
                 <label>Канал
                     <select name="update_channel">

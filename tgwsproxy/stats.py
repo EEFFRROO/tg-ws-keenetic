@@ -17,6 +17,7 @@ class Stats:
     connections_total: int = 0
     connections_active: int = 0
     connections_ws: int = 0
+    connections_fronting: int = 0
     connections_tcp_fallback: int = 0
     connections_cfproxy: int = 0
     connections_bad: int = 0
@@ -26,6 +27,8 @@ class Stats:
     bytes_down: int = 0
     pool_hits: int = 0
     pool_misses: int = 0
+    cf_pool_hits: int = 0
+    cf_pool_misses: int = 0
     started_at: float = field(default=0.0)
 
     def summary(self) -> str:
@@ -35,6 +38,7 @@ class Stats:
             f"total={self.connections_total} "
             f"active={self.connections_active} "
             f"ws={self.connections_ws} "
+            f"fronting={self.connections_fronting} "
             f"tcp_fb={self.connections_tcp_fallback} "
             f"cf={self.connections_cfproxy} "
             f"bad={self.connections_bad} "
@@ -51,6 +55,7 @@ class Stats:
                 "total": self.connections_total,
                 "active": self.connections_active,
                 "ws": self.connections_ws,
+                "fronting": self.connections_fronting,
                 "tcp_fallback": self.connections_tcp_fallback,
                 "cfproxy": self.connections_cfproxy,
                 "bad": self.connections_bad,
@@ -66,6 +71,8 @@ class Stats:
                 "errors": self.ws_errors,
                 "pool_hits": self.pool_hits,
                 "pool_misses": self.pool_misses,
+                "cf_pool_hits": self.cf_pool_hits,
+                "cf_pool_misses": self.cf_pool_misses,
             },
             "started_at": self.started_at,
         }

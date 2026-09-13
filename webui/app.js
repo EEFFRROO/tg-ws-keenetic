@@ -78,12 +78,14 @@
             ['Всего соединений', c.total],
             ['Активные',         c.active],
             ['Через WebSocket',  c.ws],
+            ['Domain Fronting',  c.fronting || 0],
             ['Через TCP fallback', c.tcp_fallback],
             ['Через Cloudflare', c.cfproxy],
             ['Замаскированные',  c.masked],
             ['Не прошли auth',   c.bad],
             ['Ошибок WS',        w.errors],
-            ['Pool hit/miss',    `${w.pool_hits || 0} / ${w.pool_misses || 0}`],
+            ['WS Pool hit/miss', `${w.pool_hits || 0} / ${w.pool_misses || 0}`],
+            ['CF Pool hit/miss', `${w.cf_pool_hits || 0} / ${w.cf_pool_misses || 0}`],
             ['Передано',         t.human_up],
             ['Получено',         t.human_down],
         ];
@@ -102,6 +104,10 @@
             } else if (name === 'dc_redirects') {
                 field.value = Object.entries(value)
                     .map(([dc, ip]) => `${dc}: ${ip}`).join('\n');
+            } else if (name === 'cfproxy_worker_domain' && Array.isArray(cfg.cfproxy_worker_domains) && cfg.cfproxy_worker_domains.length) {
+                field.value = cfg.cfproxy_worker_domains.join(', ');
+            } else if (name === 'cfproxy_user_domain' && Array.isArray(cfg.cfproxy_user_domains) && cfg.cfproxy_user_domains.length) {
+                field.value = cfg.cfproxy_user_domains.join(', ');
             } else {
                 field.value = value == null ? '' : value;
             }

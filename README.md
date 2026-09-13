@@ -39,7 +39,7 @@ opkg install python3 python3-cryptography git
 
 # 2) Получить код
 cd /opt/tmp
-git clone https://github.com/<your-fork>/tg-ws-keenetic.git
+git clone https://github.com/EEFFRROO/tg-ws-keenetic.git
 cd tg-ws-keenetic
 
 # 3) Установить

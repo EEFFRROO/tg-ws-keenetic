@@ -53,7 +53,7 @@ python3 -c "import cryptography; print(cryptography.__version__)"
 
 ```sh
 cd /opt/tmp
-git clone https://github.com/<your-fork>/tg-ws-keenetic.git
+git clone https://github.com/EEFFRROO/tg-ws-keenetic.git
 cd tg-ws-keenetic
 ```
 

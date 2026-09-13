@@ -1,7 +1,7 @@
 """Fallback strategies when the primary WSS path to Telegram is down.
 
 Order of attempts is decided here based on what is enabled in config:
-  1. Cloudflare Worker (if `cfproxy_worker_domain` set)
+  1. Cloudflare Worker (if worker domains set)
   2. Cloudflare proxied domain pool (if `cfproxy` enabled)
   3. Direct TCP to the DC default IP on :443
 
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
+from typing import TYPE_CHECKING, List, Optional
 from urllib.parse import urlencode
 
 from .balancer import balancer
@@ -22,17 +22,37 @@ from .crypto import ReencryptionContext
 from .stats import Stats
 from .websocket import RawWebSocket
 
+if TYPE_CHECKING:
+    from .ws_pool import CloudflareWorkerPool
+
 log = logging.getLogger("tgwsproxy.fallback")
 
 
 class FallbackConfig:
-    """Bundles the few flags that influence fallback selection."""
+    """Bundles the flags and pools that influence fallback selection."""
 
-    __slots__ = ("cfproxy_enabled", "cfproxy_worker_domain")
+    __slots__ = (
+        "cfproxy_enabled",
+        "cfproxy_worker_domains",
+        "cf_worker_pool",
+        "buffer_size",
+    )
 
-    def __init__(self, cfproxy_enabled: bool, cfproxy_worker_domain: str):
+    def __init__(
+        self,
+        cfproxy_enabled: bool,
+        cfproxy_worker_domains: List[str],
+        cf_worker_pool: Optional["CloudflareWorkerPool"] = None,
+        buffer_size: int = 256 * 1024,
+    ):
         self.cfproxy_enabled = cfproxy_enabled
-        self.cfproxy_worker_domain = cfproxy_worker_domain
+        self.cfproxy_worker_domains = cfproxy_worker_domains
+        self.cf_worker_pool = cf_worker_pool
+        self.buffer_size = buffer_size
+
+    @property
+    def cfproxy_worker_domain(self) -> str:
+        return self.cfproxy_worker_domains[0] if self.cfproxy_worker_domains else ""
 
 
 async def attempt_fallback(
@@ -51,7 +71,7 @@ async def attempt_fallback(
     target_ip = DC_DEFAULT_IPS.get(dc)
     media_tag = " media" if is_media else ""
 
-    if cfg.cfproxy_worker_domain and target_ip:
+    if cfg.cfproxy_worker_domains and target_ip:
         if await _cfworker(
             client_reader,
             client_writer,
@@ -82,8 +102,7 @@ async def attempt_fallback(
             return True
 
     if target_ip:
-        log.info("[%s] DC%d%s -> TCP fallback %s:443",
-                 label, dc, media_tag, target_ip)
+        log.info("[%s] DC%d%s -> TCP fallback %s:443", label, dc, media_tag, target_ip)
         if await _tcp(
             client_reader,
             client_writer,
@@ -108,28 +127,84 @@ async def _cfworker(
     target_ip,
     ctx,
     stats,
-    cfg,
+    cfg: FallbackConfig,
     splitter,
 ) -> bool:
     media_tag = " media" if is_media else ""
-    domain = cfg.cfproxy_worker_domain
-    query = urlencode(
-        {"dst": target_ip, "dc": str(dc), "media": "1" if is_media else "0"}
-    )
-    log.info("[%s] DC%d%s -> CF worker %s", label, dc, media_tag, domain)
-    try:
-        ws = await RawWebSocket.connect(
-            domain, domain, timeout=10.0, path=f"/apiws?{query}"
+    worker_domains = cfg.cfproxy_worker_domains
+    if not worker_domains:
+        return False
+
+    ws: Optional[RawWebSocket] = None
+    chosen_domain: Optional[str] = None
+
+    if cfg.cf_worker_pool is not None:
+        pooled = await cfg.cf_worker_pool.acquire(dc, target_ip, worker_domains)
+        if pooled is not None:
+            ws, chosen_domain = pooled
+            log.info(
+                "[%s] DC%d%s -> CF worker pool hit via %s",
+                label,
+                dc,
+                media_tag,
+                chosen_domain,
+            )
+
+    if ws is None:
+        query = urlencode(
+            {"dst": target_ip, "dc": str(dc), "media": "1" if is_media else "0"}
         )
-    except Exception as exc:
-        log.warning("[%s] DC%d%s CF worker failed: %r",
-                    label, dc, media_tag, exc)
+        path = f"/apiws?{query}"
+        available = (
+            cfg.cf_worker_pool.available_domains(worker_domains)
+            if cfg.cf_worker_pool is not None
+            else worker_domains
+        )
+        for domain in available:
+            log.info(
+                "[%s] DC%d%s -> trying CF worker %s",
+                label,
+                dc,
+                media_tag,
+                domain,
+            )
+            try:
+                ws = await RawWebSocket.connect(
+                    domain,
+                    domain,
+                    timeout=5.0,
+                    path=path,
+                    buffer_size=cfg.buffer_size,
+                )
+                chosen_domain = domain
+                break
+            except Exception as exc:
+                if cfg.cf_worker_pool is not None:
+                    cfg.cf_worker_pool.report_failure(domain, exc)
+                log.warning(
+                    "[%s] DC%d%s CF worker %s failed: %r",
+                    label,
+                    dc,
+                    media_tag,
+                    domain,
+                    exc,
+                )
+                continue
+
+    if ws is None:
         return False
 
     stats.connections_cfproxy += 1
     await ws.send(relay_init)
     await bridge_ws(
-        client_reader, client_writer, ws, label, ctx, stats, dc, is_media,
+        client_reader,
+        client_writer,
+        ws,
+        label,
+        ctx,
+        stats,
+        dc,
+        is_media,
         splitter=splitter,
     )
     return True
@@ -154,12 +229,18 @@ async def _cfproxy(
     for base in balancer.candidates_for(dc):
         domain = f"kws{dc}.{base}"
         try:
-            ws = await RawWebSocket.connect(domain, domain, timeout=10.0)
+            ws = await RawWebSocket.connect(domain, domain, timeout=5.0)
             chosen = base
             break
         except Exception as exc:
-            log.warning("[%s] DC%d%s CF %s failed: %r",
-                        label, dc, media_tag, base, exc)
+            log.warning(
+                "[%s] DC%d%s CF %s failed: %r",
+                label,
+                dc,
+                media_tag,
+                base,
+                exc,
+            )
 
     if ws is None:
         return False
@@ -170,7 +251,14 @@ async def _cfproxy(
     stats.connections_cfproxy += 1
     await ws.send(relay_init)
     await bridge_ws(
-        client_reader, client_writer, ws, label, ctx, stats, dc, is_media,
+        client_reader,
+        client_writer,
+        ws,
+        label,
+        ctx,
+        stats,
+        dc,
+        is_media,
         splitter=splitter,
     )
     return True
@@ -187,7 +275,7 @@ async def _tcp(
 ) -> bool:
     try:
         remote_reader, remote_writer = await asyncio.wait_for(
-            asyncio.open_connection(dst, 443), timeout=10
+            asyncio.open_connection(dst, 443), timeout=6.0
         )
     except Exception as exc:
         log.warning("[%s] TCP fallback %s:443 failed: %r", label, dst, exc)
@@ -197,7 +285,12 @@ async def _tcp(
     remote_writer.write(relay_init)
     await remote_writer.drain()
     await bridge_tcp(
-        client_reader, client_writer, remote_reader, remote_writer,
-        label, ctx, stats,
+        client_reader,
+        client_writer,
+        remote_reader,
+        remote_writer,
+        label,
+        ctx,
+        stats,
     )
     return True

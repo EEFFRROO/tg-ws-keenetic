@@ -40,7 +40,7 @@ log = logging.getLogger("tgwsproxy.handler")
 
 DC_FAIL_COOLDOWN = 30.0
 WS_FAST_FAIL_TIMEOUT = 2.0
-WS_DEFAULT_TIMEOUT = 10.0
+WS_DEFAULT_TIMEOUT = 4.0
 
 
 @dataclass
@@ -314,40 +314,26 @@ class ClientHandler:
             log.info("[%s] DC%d%s -> pool hit via %s",
                      label, dc, media_tag, target_ip)
         else:
-            for domain in domains:
-                log.info(
-                    "[%s] DC%d%s -> wss://%s via %s",
-                    label, dc, media_tag, domain, target_ip,
+            log.info(
+                "[%s] DC%d%s -> connecting to candidate domains via %s",
+                label,
+                dc,
+                media_tag,
+                target_ip,
+            )
+            ws = await self._pool.connect_candidate(target_ip, domains, timeout=timeout)
+            if ws is not None:
+                ws_failed = False
+                ws_redirect_only = False
+            else:
+                self._stats.ws_errors += 1
+                log.warning(
+                    "[%s] DC%d%s all WS candidates failed via %s",
+                    label,
+                    dc,
+                    media_tag,
+                    target_ip,
                 )
-                try:
-                    ws = await RawWebSocket.connect(
-                        target_ip, domain, timeout=timeout,
-                        buffer_size=self._settings.buffer_size,
-                    )
-                    ws_failed = False
-                    ws_redirect_only = False
-                    break
-                except WsHandshakeError as exc:
-                    self._stats.ws_errors += 1
-                    if exc.is_redirect:
-                        log.warning(
-                            "[%s] DC%d%s %d from %s -> %s",
-                            label, dc, media_tag, exc.status_code, domain,
-                            exc.location or "?",
-                        )
-                        continue
-                    ws_redirect_only = False
-                    log.warning(
-                        "[%s] DC%d%s WS handshake: %s",
-                        label, dc, media_tag, exc.status_line,
-                    )
-                except Exception as exc:
-                    self._stats.ws_errors += 1
-                    ws_redirect_only = False
-                    log.warning(
-                        "[%s] DC%d%s WS connect failed: %r",
-                        label, dc, media_tag, exc,
-                    )
 
         if ws is None:
             self._record_ws_failure(dc_key, ws_redirect_only, label, media_tag, dc)

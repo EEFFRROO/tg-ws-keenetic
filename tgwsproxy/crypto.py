@@ -17,7 +17,7 @@ import struct
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from ._aes import Cipher, algorithms, modes
 
 from .constants import (
     DC_IDX_POS,

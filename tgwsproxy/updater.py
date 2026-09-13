@@ -41,7 +41,7 @@ from . import __version__
 log = logging.getLogger("tgwsproxy.updater")
 
 GITHUB_API_BASE = "https://api.github.com"
-DEFAULT_REPO = "Omn1z/tg-ws-keenetic"
+DEFAULT_REPO = "EEFFRROO/tg-ws-keenetic"
 DEFAULT_INSTALL_ROOT = "/opt/share/tgwsproxy"
 DEFAULT_INIT_SCRIPT = "/opt/etc/init.d/S99tgwsproxy"
 USER_AGENT = f"tgwsproxy-updater/{__version__}"

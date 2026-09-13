@@ -64,6 +64,9 @@ SESSION_ID_LEN = 32
 # Tolerance for client_random embedded timestamp (seconds).
 TIMESTAMP_TOLERANCE = 120
 
+# Default fronting SNI used to bypass DPI/TSPU censorship of Telegram domains.
+DEFAULT_FRONTING_SNI = "sprinthost.ru"
+
 # --- WebSocket -----------------------------------------------------------
 
 WS_OP_CONT = 0x0

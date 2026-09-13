@@ -105,14 +105,17 @@ class RawWebSocket:
     async def connect(
         cls,
         host: str,
-        sni_domain: str,
+        domain: str,
         timeout: float = 10.0,
         path: str = "/apiws",
         buffer_size: int = 256 * 1024,
+        *,
+        sni: Optional[str] = None,
     ) -> "RawWebSocket":
+        tls_server_name = sni if sni is not None else domain
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(
-                host, 443, ssl=_SSL_CTX, server_hostname=sni_domain
+                host, 443, ssl=_SSL_CTX, server_hostname=tls_server_name
             ),
             timeout=min(timeout, 10),
         )
@@ -121,7 +124,7 @@ class RawWebSocket:
         ws_key = base64.b64encode(os.urandom(16)).decode()
         request = (
             f"GET {path} HTTP/1.1\r\n"
-            f"Host: {sni_domain}\r\n"
+            f"Host: {domain}\r\n"
             f"Upgrade: websocket\r\n"
             f"Connection: Upgrade\r\n"
             f"Sec-WebSocket-Key: {ws_key}\r\n"
@@ -129,14 +132,21 @@ class RawWebSocket:
             f"Sec-WebSocket-Protocol: binary\r\n"
             f"\r\n"
         )
-        writer.write(request.encode())
-        await writer.drain()
+        try:
+            writer.write(request.encode())
+            await writer.drain()
 
-        status_code, status_line, headers = await cls._read_response(
-            reader, timeout
-        )
-        if status_code == 101:
-            return cls(reader, writer)
+            status_code, status_line, headers = await cls._read_response(
+                reader, timeout
+            )
+            if status_code == 101:
+                return cls(reader, writer)
+        except Exception:
+            try:
+                writer.close()
+            except Exception:
+                pass
+            raise
 
         try:
             writer.close()

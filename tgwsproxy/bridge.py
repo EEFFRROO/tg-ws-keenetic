@@ -15,7 +15,7 @@ import logging
 import struct
 from typing import List, Optional
 
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from ._aes import Cipher, algorithms, modes
 
 from .constants import (
     PROTO_INT_ABRIDGED,
@@ -58,20 +58,24 @@ class MessageSplitter:
         self._plain_buf.extend(self._decryptor.update(chunk))
 
         parts: List[bytes] = []
-        while self._cipher_buf:
-            length = self._next_packet_len()
-            if length is None:
+        offset = 0
+        buf_len = len(self._cipher_buf)
+        while offset < buf_len:
+            packet_len = self._next_packet_len(offset, buf_len - offset)
+            if packet_len is None:
                 break
-            if length <= 0:
+            if packet_len <= 0:
                 # Unknown — flush remainder as one piece and stop splitting.
-                parts.append(bytes(self._cipher_buf))
-                self._cipher_buf.clear()
-                self._plain_buf.clear()
+                parts.append(bytes(self._cipher_buf[offset:]))
+                offset = buf_len
                 self._off = True
                 break
-            parts.append(bytes(self._cipher_buf[:length]))
-            del self._cipher_buf[:length]
-            del self._plain_buf[:length]
+            parts.append(bytes(self._cipher_buf[offset : offset + packet_len]))
+            offset += packet_len
+
+        if offset:
+            del self._cipher_buf[:offset]
+            del self._plain_buf[:offset]
         return parts
 
     def flush(self) -> List[bytes]:
@@ -82,41 +86,49 @@ class MessageSplitter:
         self._plain_buf.clear()
         return [tail]
 
-    def _next_packet_len(self) -> Optional[int]:
-        if not self._plain_buf:
+    def _next_packet_len(self, offset: int, avail: int) -> Optional[int]:
+        if avail <= 0:
             return None
         if self._proto == PROTO_INT_ABRIDGED:
-            return self._abridged_len()
+            return self._abridged_len(offset, avail)
         if self._proto in (
             PROTO_INT_INTERMEDIATE,
             PROTO_INT_PADDED_INTERMEDIATE,
         ):
-            return self._intermediate_len()
+            return self._intermediate_len(offset, avail)
         return 0
 
-    def _abridged_len(self) -> Optional[int]:
-        first = self._plain_buf[0]
+    def _abridged_len(self, offset: int, avail: int) -> Optional[int]:
+        first = self._plain_buf[offset]
         if first in (0x7F, 0xFF):
-            if len(self._plain_buf) < 4:
+            if avail < 4:
                 return None
-            payload_len = int.from_bytes(self._plain_buf[1:4], "little") * 4
+            payload_len = (
+                int.from_bytes(self._plain_buf[offset + 1 : offset + 4], "little") * 4
+            )
             header_len = 4
         else:
             payload_len = (first & 0x7F) * 4
             header_len = 1
         if payload_len <= 0:
             return 0
-        total = header_len + payload_len
-        return total if len(self._plain_buf) >= total else None
-
-    def _intermediate_len(self) -> Optional[int]:
-        if len(self._plain_buf) < 4:
+        packet_len = header_len + payload_len
+        if avail < packet_len:
             return None
-        payload_len = _UNPACK_LE_U32.unpack_from(self._plain_buf, 0)[0] & 0x7FFFFFFF
+        return packet_len
+
+    def _intermediate_len(self, offset: int, avail: int) -> Optional[int]:
+        if avail < 4:
+            return None
+        payload_len = (
+            _UNPACK_LE_U32.unpack_from(self._plain_buf, offset)[0] & 0x7FFFFFFF
+        )
         if payload_len <= 0:
             return 0
-        total = 4 + payload_len
-        return total if len(self._plain_buf) >= total else None
+        packet_len = 4 + payload_len
+        if avail < packet_len:
+            return None
+        return packet_len
 
 
 async def bridge_ws(

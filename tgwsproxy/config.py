@@ -24,6 +24,10 @@ log = logging.getLogger("tgwsproxy.config")
 DEFAULT_CONFIG_PATH = "/opt/etc/tgwsproxy/config.json"
 DEFAULT_LOG_PATH = "/opt/var/log/tgwsproxy/tgwsproxy.log"
 
+CFPROXY_DOMAINS_URL = (
+    "https://raw.githubusercontent.com/Flowseal/tg-ws-proxy/main/.github/cfproxy-domains.txt"
+)
+
 # CF proxy fallback default pool (encoded). See balancer.py for the decoder
 # applied at load time. Encoded so a casual scan of the binary doesn't list
 # fallback infrastructure.
@@ -38,6 +42,16 @@ _CFPROXY_ENCODED_DEFAULTS: List[str] = [
     "tjacxbqtj.com",
     "bxaxtxmrw.com",
     "dmohrsgmohcrwb.com",
+    "vwbmtmoi.com",
+    "khgrre.com",
+    "ulihssf.com",
+    "tmhqsdqmfpmk.com",
+    "xwuwoqbm.com",
+    "orgcnunpj.com",
+    "zhkuldz.com",
+    "zypoljnslxa.com",
+    "efabnxaowuzs.com",
+    "zaftuzsftqdq.com",
 ]
 _TLD = "".join(chr(c) for c in (46, 99, 111, 46, 117, 107))
 
@@ -55,6 +69,78 @@ def _decode_cfproxy(label: str) -> str:
         else:
             out.append(ch)
     return "".join(out) + _TLD
+
+
+def _is_valid_domain(domain: str) -> bool:
+    if not domain or len(domain) > 253:
+        return False
+    if domain.startswith(".") or domain.endswith("."):
+        return False
+    labels = domain.split(".")
+    if len(labels) < 2:
+        return False
+    for label in labels:
+        if not label or len(label) > 63 or label[0] == "-" or label[-1] == "-":
+            return False
+        if not all(ch.isalnum() or ch == "-" for ch in label):
+            return False
+    tld = labels[-1]
+    if len(tld) < 2 or not any(ch.isalpha() for ch in tld):
+        return False
+    return True
+
+
+def _coerce_domain_list(value: Any) -> List[str]:
+    if isinstance(value, str):
+        items = value.replace(",", " ").replace(";", " ").split()
+    elif isinstance(value, (list, tuple)):
+        items = []
+        for entry in value:
+            if isinstance(entry, str):
+                items.extend(entry.replace(",", " ").replace(";", " ").split())
+    else:
+        return []
+    seen = set()
+    result: List[str] = []
+    for item in items:
+        item = item.strip()
+        if not item or not _is_valid_domain(item):
+            continue
+        key = item.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
+
+
+def fetch_cfproxy_domain_list(timeout: float = 10.0) -> List[str]:
+    """Fetch latest encoded CF proxy domains list from Flowseal GitHub."""
+    import random
+    import string
+    import ssl
+    import urllib.request
+
+    nonce = "".join(random.choices(string.ascii_letters, k=6))
+    url = f"{CFPROXY_DOMAINS_URL}?{nonce}"
+    req = urllib.request.Request(url, headers={"User-Agent": "tgwsproxy"})
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+            text = resp.read().decode("utf-8", errors="replace")
+        encoded = [
+            line.strip()
+            for line in text.splitlines()
+            if line.strip() and not line.startswith("#")
+        ]
+        decoded = [_decode_cfproxy(d) for d in encoded]
+        valid = [d for d in decoded if _is_valid_domain(d)]
+        return valid
+    except Exception as exc:
+        log.warning("Failed to fetch latest CF proxy domains from GitHub: %r", exc)
+        return []
 
 
 @dataclass
@@ -81,10 +167,16 @@ class Config:
     pool_size: int = 4
     proxy_protocol: bool = False
 
+    # Domain Fronting (bypasses DPI / TSPU censorship on *.web.telegram.org)
+    fronting: bool = True
+    fronting_sni: str = "sprinthost.ru"
+
     # Cloudflare-based fallback
     cfproxy: bool = True
     cfproxy_user_domain: str = ""
+    cfproxy_user_domains: List[str] = field(default_factory=list)
     cfproxy_worker_domain: str = ""
+    cfproxy_worker_domains: List[str] = field(default_factory=list)
 
     # Fake TLS masking
     fake_tls_domain: str = ""
@@ -95,7 +187,7 @@ class Config:
     link_host: str = ""
 
     # Self-update settings
-    update_repo: str = "Omn1z/tg-ws-keenetic"
+    update_repo: str = "EEFFRROO/tg-ws-keenetic"
     update_channel: str = "release"  # "release" (tag-based) | "main" (rolling)
 
     # Logging
@@ -109,6 +201,24 @@ class Config:
     web_password: str = ""
 
     # ---- helpers ---------------------------------------------------------
+
+    @property
+    def worker_domains_list(self) -> List[str]:
+        items: List[str] = []
+        if self.cfproxy_worker_domains:
+            items.extend(self.cfproxy_worker_domains)
+        if self.cfproxy_worker_domain:
+            items.extend(self.cfproxy_worker_domain.replace(",", " ").replace(";", " ").split())
+        return _coerce_domain_list(items)
+
+    @property
+    def user_domains_list(self) -> List[str]:
+        items: List[str] = []
+        if self.cfproxy_user_domains:
+            items.extend(self.cfproxy_user_domains)
+        if self.cfproxy_user_domain:
+            items.extend(self.cfproxy_user_domain.replace(",", " ").replace(";", " ").split())
+        return _coerce_domain_list(items)
 
     def ensure_secret(self) -> None:
         if not self.secret:
@@ -223,9 +333,13 @@ def _from_dict(raw: Dict[str, Any]) -> Config:
         buffer_size=int(merged["buffer_size"]),
         pool_size=int(merged["pool_size"]),
         proxy_protocol=bool(merged["proxy_protocol"]),
+        fronting=bool(merged.get("fronting", True)),
+        fronting_sni=str(merged.get("fronting_sni", "sprinthost.ru")),
         cfproxy=bool(merged["cfproxy"]),
         cfproxy_user_domain=str(merged["cfproxy_user_domain"]),
+        cfproxy_user_domains=_coerce_domain_list(merged.get("cfproxy_user_domains", [])),
         cfproxy_worker_domain=str(merged["cfproxy_worker_domain"]),
+        cfproxy_worker_domains=_coerce_domain_list(merged.get("cfproxy_worker_domains", [])),
         fake_tls_domain=str(merged["fake_tls_domain"]),
         link_host=str(merged["link_host"]),
         update_repo=str(merged["update_repo"]),

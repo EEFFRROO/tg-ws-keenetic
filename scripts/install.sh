@@ -26,14 +26,19 @@ die()     { printf '\033[31mERROR:\033[0m %s\n' "$1" >&2; exit 1; }
 [ -d /opt ] || die "/opt not found — install Entware first."
 [ -d ./tgwsproxy ] || die "Run this from the project root (need ./tgwsproxy/ folder)."
 
-bold "Checking Python and cryptography..."
+bold "Checking Python and cryptography / OpenSSL..."
 PYTHON_BIN=$(command -v python3 || true)
 [ -x "$PYTHON_BIN" ] || die "python3 not installed. Run: opkg install python3"
 
 if ! "$PYTHON_BIN" -c 'import cryptography' >/dev/null 2>&1; then
-    die "python3-cryptography is missing. Run: opkg install python3-cryptography"
+    if ! "$PYTHON_BIN" -c 'import ctypes; (ctypes.CDLL("/opt/lib/libcrypto.so") if __import__("os").path.exists("/opt/lib/libcrypto.so") else ctypes.CDLL(ctypes.util.find_library("crypto")))' >/dev/null 2>&1; then
+        die "Neither python3-cryptography nor libopenssl found. Run: opkg install python3-cryptography OR opkg install libopenssl"
+    else
+        warn "python3-cryptography not installed, but system libcrypto is available (AES-CTR fallback will be used)."
+    fi
+else
+    ok "Python and cryptography are available"
 fi
-ok "Python and cryptography are available"
 
 bold "Creating directories..."
 mkdir -p "$INSTALL_ROOT" "$CONFIG_DIR" "$LOG_DIR" "$RUN_DIR"

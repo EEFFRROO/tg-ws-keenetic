@@ -12,11 +12,11 @@ import time
 from typing import Optional, Set
 
 from .balancer import balancer
-from .config import Config
+from .config import Config, fetch_cfproxy_domain_list
 from .fallback import FallbackConfig
 from .handler import ClientHandler, HandlerSettings
 from .stats import stats
-from .ws_pool import WebSocketPool
+from .ws_pool import CloudflareWorkerPool, WebSocketPool
 
 log = logging.getLogger("tgwsproxy.server")
 
@@ -28,9 +28,11 @@ class ProxyServer:
         self._stop_event: Optional[asyncio.Event] = None
         self._serve_task: Optional[asyncio.Task] = None
         self._stats_task: Optional[asyncio.Task] = None
+        self._cf_refresh_task: Optional[asyncio.Task] = None
         self._tasks: Set[asyncio.Task] = set()
         self._handler: Optional[ClientHandler] = None
         self._pool: Optional[WebSocketPool] = None
+        self._cf_worker_pool: Optional[CloudflareWorkerPool] = None
 
     @property
     def listening(self) -> bool:
@@ -45,6 +47,10 @@ class ProxyServer:
         return self._pool
 
     @property
+    def cf_worker_pool(self) -> Optional[CloudflareWorkerPool]:
+        return self._cf_worker_pool
+
+    @property
     def config(self) -> Config:
         return self._config
 
@@ -53,13 +59,20 @@ class ProxyServer:
             return
         self._stop_event = asyncio.Event()
 
-        if self._config.cfproxy and not self._config.cfproxy_user_domain:
+        user_domains = self._config.user_domains_list
+        if user_domains:
+            balancer.update_pool(user_domains)
+        elif self._config.cfproxy:
             balancer.update_pool(self._config.cfproxy_default_pool())
-        elif self._config.cfproxy_user_domain:
-            balancer.update_pool([self._config.cfproxy_user_domain])
 
         self._pool = WebSocketPool(
             target_size=self._config.pool_size,
+            buffer_size=self._config.buffer_size,
+            stats=stats,
+            fronting_enabled=self._config.fronting,
+            fronting_sni=self._config.fronting_sni,
+        )
+        self._cf_worker_pool = CloudflareWorkerPool(
             buffer_size=self._config.buffer_size,
             stats=stats,
         )
@@ -76,18 +89,34 @@ class ProxyServer:
         self._set_nodelay()
 
         log.info("=" * 60)
-        log.info("  TG WS Proxy listening on %s:%d",
-                 self._config.host, self._config.port)
+        log.info(
+            "  TG WS Proxy listening on %s:%d",
+            self._config.host,
+            self._config.port,
+        )
         log.info("  Secret: %s", self._config.secret)
+        log.info(
+            "  Domain Fronting: %s (SNI: %s)",
+            "enabled" if self._config.fronting else "disabled",
+            self._config.fronting_sni,
+        )
         log.info("  DC routes:")
         for dc, ip in sorted(self._config.dc_redirects.items()):
             log.info("    DC%d -> %s", dc, ip)
+        if self._config.worker_domains_list:
+            log.info("  CF Workers: %s", ", ".join(self._config.worker_domains_list))
         if self._config.fake_tls_domain:
             log.info("  Fake TLS: %s", self._config.fake_tls_domain)
         log.info("=" * 60)
 
         self._stats_task = asyncio.create_task(self._log_stats_loop())
         await self._pool.warmup(self._config.dc_redirects)
+        await self._cf_worker_pool.warmup(
+            self._config.dc_redirects, self._config.worker_domains_list
+        )
+
+        if self._config.cfproxy and not user_domains:
+            self._cf_refresh_task = asyncio.create_task(self._cfproxy_refresh_loop())
 
         self._serve_task = asyncio.create_task(self._serve_forever())
 
@@ -105,21 +134,15 @@ class ProxyServer:
             except Exception:
                 pass
 
-        if self._stats_task is not None:
-            self._stats_task.cancel()
-            try:
-                await self._stats_task
-            except (asyncio.CancelledError, Exception):
-                pass
-            self._stats_task = None
-
-        if self._serve_task is not None:
-            self._serve_task.cancel()
-            try:
-                await self._serve_task
-            except (asyncio.CancelledError, Exception):
-                pass
-            self._serve_task = None
+        for task_name in ("_stats_task", "_serve_task", "_cf_refresh_task"):
+            t: Optional[asyncio.Task] = getattr(self, task_name, None)
+            if t is not None:
+                t.cancel()
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):
+                    pass
+                setattr(self, task_name, None)
 
         for task in list(self._tasks):
             task.cancel()
@@ -132,6 +155,8 @@ class ProxyServer:
 
         if self._pool is not None:
             self._pool.reset()
+        if self._cf_worker_pool is not None:
+            self._cf_worker_pool.reset()
 
         self._server = None
         self._handler = None
@@ -162,7 +187,9 @@ class ProxyServer:
             proxy_protocol=self._config.proxy_protocol,
             fallback=FallbackConfig(
                 cfproxy_enabled=self._config.cfproxy,
-                cfproxy_worker_domain=self._config.cfproxy_worker_domain,
+                cfproxy_worker_domains=self._config.worker_domains_list,
+                cf_worker_pool=self._cf_worker_pool,
+                buffer_size=self._config.buffer_size,
             ),
         )
 
@@ -202,4 +229,18 @@ class ProxyServer:
                 await asyncio.sleep(60)
                 log.info("stats: %s", stats.summary())
         except asyncio.CancelledError:
-            raise
+            pass
+
+    async def _cfproxy_refresh_loop(self) -> None:
+        """Periodically refresh Cloudflare proxy fallback domains from GitHub."""
+        try:
+            while True:
+                await asyncio.sleep(3600)
+                if not self._config.cfproxy or self._config.user_domains_list:
+                    continue
+                fetched = await asyncio.to_thread(fetch_cfproxy_domain_list)
+                if len(fetched) >= 3:
+                    balancer.update_pool(fetched)
+                    log.info("CF proxy domain pool refreshed from GitHub (%d domains)", len(fetched))
+        except asyncio.CancelledError:
+            pass
