@@ -75,6 +75,7 @@ class ProxyServer:
         self._cf_worker_pool = CloudflareWorkerPool(
             buffer_size=self._config.buffer_size,
             stats=stats,
+            no_secure=self._config.no_secure,
         )
         self._handler = ClientHandler(
             settings=self._build_handler_settings(),
@@ -190,6 +191,7 @@ class ProxyServer:
                 cfproxy_worker_domains=self._config.worker_domains_list,
                 cf_worker_pool=self._cf_worker_pool,
                 buffer_size=self._config.buffer_size,
+                no_secure=self._config.no_secure,
             ),
         )
 

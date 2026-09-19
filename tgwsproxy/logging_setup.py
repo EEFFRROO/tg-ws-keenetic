@@ -4,7 +4,42 @@ from __future__ import annotations
 import logging
 import logging.handlers
 import os
+import re
 from typing import Optional
+
+
+class DomainCensorFilter(logging.Filter):
+    """Censors private domain names in logs to protect user privacy when sharing logs."""
+
+    domain_pattern = re.compile(
+        r"(?<![\w-])(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+"
+        r"[a-zA-Z]{2,}(?![\w-])"
+    )
+
+    def _censor_match(self, match: re.Match) -> str:
+        domain = match.group()
+        normalized = domain.casefold().rstrip(".")
+        if (
+            normalized == "telegram.org"
+            or normalized.endswith(".telegram.org")
+            or normalized.endswith(".log")
+            or normalized == "sprinthost.ru"
+        ):
+            return domain
+        parts = domain.split(".")
+        if len(parts) < 2:
+            return domain
+        return ".".join(
+            part
+            if i == len(parts) - 1
+            else part[: len(part) // 2] + "*" * (len(part) - len(part) // 2)
+            for i, part in enumerate(parts)
+        )
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = self.domain_pattern.sub(self._censor_match, record.getMessage())
+        record.args = ()
+        return True
 
 
 def configure_logging(
@@ -19,6 +54,7 @@ def configure_logging(
         "%(asctime)s  %(levelname)-5s  %(name)s  %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+    censor = DomainCensorFilter()
 
     root = logging.getLogger()
     for handler in list(root.handlers):
@@ -27,6 +63,7 @@ def configure_logging(
 
     console = logging.StreamHandler()
     console.setFormatter(fmt)
+    console.addFilter(censor)
     root.addHandler(console)
 
     if log_file:
@@ -39,6 +76,7 @@ def configure_logging(
                 encoding="utf-8",
             )
             file_handler.setFormatter(fmt)
+            file_handler.addFilter(censor)
             root.addHandler(file_handler)
         except OSError as exc:
             root.warning("Cannot open log file %s: %s", log_file, exc)

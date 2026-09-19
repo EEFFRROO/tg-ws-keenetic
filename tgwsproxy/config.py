@@ -177,6 +177,7 @@ class Config:
     cfproxy_user_domains: List[str] = field(default_factory=list)
     cfproxy_worker_domain: str = ""
     cfproxy_worker_domains: List[str] = field(default_factory=list)
+    no_secure: bool = False  # Use port 80 (HTTP) for CF proxy and CF worker instead of 443
 
     # Fake TLS masking
     fake_tls_domain: str = ""
@@ -340,6 +341,7 @@ def _from_dict(raw: Dict[str, Any]) -> Config:
         cfproxy_user_domains=_coerce_domain_list(merged.get("cfproxy_user_domains", [])),
         cfproxy_worker_domain=str(merged["cfproxy_worker_domain"]),
         cfproxy_worker_domains=_coerce_domain_list(merged.get("cfproxy_worker_domains", [])),
+        no_secure=bool(merged.get("no_secure", False)),
         fake_tls_domain=str(merged["fake_tls_domain"]),
         link_host=str(merged["link_host"]),
         update_repo=str(merged["update_repo"]),

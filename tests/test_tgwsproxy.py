@@ -13,6 +13,7 @@ from tgwsproxy.constants import (
     PROTO_TAG_ABRIDGED,
     DEFAULT_FRONTING_SNI,
 )
+from tgwsproxy.logging_setup import DomainCensorFilter
 from tgwsproxy.stats import Stats
 from tgwsproxy.ws_pool import ws_domains_for, WebSocketPool, CloudflareWorkerPool
 
@@ -106,6 +107,26 @@ class TestPools(unittest.TestCase):
         domains = ["w1.workers.dev", "w2.workers.dev", "w1.workers.dev"]
         avail = pool.available_domains(domains)
         self.assertEqual(set(avail), {"w1.workers.dev", "w2.workers.dev"})
+
+
+class TestLogging(unittest.TestCase):
+    def test_domain_censor(self):
+        import logging
+
+        censor = DomainCensorFilter()
+        rec = logging.LogRecord(
+            "test",
+            logging.INFO,
+            "test.py",
+            1,
+            "Connecting to mysecretworker.workers.dev and kws4.web.telegram.org",
+            (),
+            None,
+        )
+        censor.filter(rec)
+        self.assertIn("kws4.web.telegram.org", rec.msg)
+        self.assertNotIn("mysecretworker", rec.msg)
+        self.assertIn(".dev", rec.msg)
 
 
 if __name__ == "__main__":

@@ -36,6 +36,7 @@ class FallbackConfig:
         "cfproxy_worker_domains",
         "cf_worker_pool",
         "buffer_size",
+        "no_secure",
     )
 
     def __init__(
@@ -44,11 +45,13 @@ class FallbackConfig:
         cfproxy_worker_domains: List[str],
         cf_worker_pool: Optional["CloudflareWorkerPool"] = None,
         buffer_size: int = 256 * 1024,
+        no_secure: bool = False,
     ):
         self.cfproxy_enabled = cfproxy_enabled
         self.cfproxy_worker_domains = cfproxy_worker_domains
         self.cf_worker_pool = cf_worker_pool
         self.buffer_size = buffer_size
+        self.no_secure = no_secure
 
     @property
     def cfproxy_worker_domain(self) -> str:
@@ -175,6 +178,7 @@ async def _cfworker(
                     timeout=5.0,
                     path=path,
                     buffer_size=cfg.buffer_size,
+                    secure=not cfg.no_secure,
                 )
                 chosen_domain = domain
                 break
@@ -229,7 +233,9 @@ async def _cfproxy(
     for base in balancer.candidates_for(dc):
         domain = f"kws{dc}.{base}"
         try:
-            ws = await RawWebSocket.connect(domain, domain, timeout=5.0)
+            ws = await RawWebSocket.connect(
+                domain, domain, timeout=5.0, secure=not cfg.no_secure
+            )
             chosen = base
             break
         except Exception as exc:

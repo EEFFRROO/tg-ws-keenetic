@@ -111,12 +111,18 @@ class RawWebSocket:
         buffer_size: int = 256 * 1024,
         *,
         sni: Optional[str] = None,
+        secure: bool = True,
     ) -> "RawWebSocket":
-        tls_server_name = sni if sni is not None else domain
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(
+        if secure:
+            tls_server_name = sni if sni is not None else domain
+            open_coro = asyncio.open_connection(
                 host, 443, ssl=_SSL_CTX, server_hostname=tls_server_name
-            ),
+            )
+        else:
+            open_coro = asyncio.open_connection(host, 80)
+
+        reader, writer = await asyncio.wait_for(
+            open_coro,
             timeout=min(timeout, 10),
         )
         apply_socket_options(writer.transport, buffer_size)

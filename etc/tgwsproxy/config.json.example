@@ -16,6 +16,7 @@
   "cfproxy": true,
   "cfproxy_user_domain": "",
   "cfproxy_worker_domain": "",
+  "no_secure": false,
   "fake_tls_domain": "",
   "link_host": "",
   "update_repo": "EEFFRROO/tg-ws-keenetic",

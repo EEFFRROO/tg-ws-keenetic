@@ -232,9 +232,10 @@ class CloudflareWorkerPool:
     WS_POOL_MAX_AGE = 100.0
     PER_DC_LIMIT = 2
 
-    def __init__(self, buffer_size: int, stats: Stats):
+    def __init__(self, buffer_size: int, stats: Stats, no_secure: bool = False):
         self._buffer = buffer_size
         self._stats = stats
+        self._no_secure = no_secure
         self._idle: Dict[int, Deque[Tuple[RawWebSocket, float, str]]] = {}
         self._refilling: Set[int] = set()
         self._exhausted_until: Dict[str, float] = {}
@@ -331,6 +332,7 @@ class CloudflareWorkerPool:
                     timeout=5.0,
                     path=path,
                     buffer_size=self._buffer,
+                    secure=not self._no_secure,
                 )
                 return ws, domain
             except Exception as exc:
