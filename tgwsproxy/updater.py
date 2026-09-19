@@ -89,9 +89,11 @@ def _http_get(url: str, *, timeout: float = 15.0,
               accept: str = "application/json") -> bytes:
     """GET an HTTPS URL, following redirects, returning raw bytes."""
     req = urllib.request.Request(
-        url, headers={"User-Agent": USER_AGENT, "Accept": accept}
+        url, headers={"User-Agent": USER_AGENT, "Accept": accept, "Cache-Control": "no-cache"}
     )
     ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
             return resp.read()
