@@ -100,6 +100,7 @@ async def attempt_fallback(
             is_media,
             ctx,
             stats,
+            cfg,
             splitter,
         ):
             return True
@@ -223,6 +224,7 @@ async def _cfproxy(
     is_media,
     ctx,
     stats,
+    cfg: FallbackConfig,
     splitter,
 ) -> bool:
     media_tag = " media" if is_media else ""
@@ -230,8 +232,9 @@ async def _cfproxy(
 
     ws = None
     chosen = None
+    effective_dc = 2 if dc == 203 else dc
     for base in balancer.candidates_for(dc):
-        domain = f"kws{dc}.{base}"
+        domain = f"kws{effective_dc}.{base}"
         try:
             ws = await RawWebSocket.connect(
                 domain, domain, timeout=5.0, secure=not cfg.no_secure

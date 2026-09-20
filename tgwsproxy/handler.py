@@ -276,13 +276,15 @@ class ClientHandler:
         relay_init = generate_relay_handshake(parsed.proto_tag, parsed.dc_index)
         ctx = build_context(parsed.prekey_iv, self._settings.secret, relay_init)
 
+        routed_dc = 2 if dc == 203 else dc
+
         # No route for this DC at all? -> fallback only.
         if (
-            dc not in self._settings.dc_redirects
+            routed_dc not in self._settings.dc_redirects
             or self._cooldown.is_blacklisted(dc_key)
         ):
             reason = (
-                "no DC route" if dc not in self._settings.dc_redirects
+                "no DC route" if routed_dc not in self._settings.dc_redirects
                 else "DC blacklisted"
             )
             log.info("[%s] DC%d%s %s -> fallback", label, dc, media_tag, reason)
@@ -298,7 +300,7 @@ class ClientHandler:
             return
 
         # Try the WS pool first, then a fresh connect.
-        target_ip = self._settings.dc_redirects[dc]
+        target_ip = self._settings.dc_redirects[routed_dc]
         domains = ws_domains_for(dc, is_media)
         timeout = (
             WS_FAST_FAIL_TIMEOUT
