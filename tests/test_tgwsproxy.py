@@ -71,9 +71,9 @@ class TestDomainsAndRouting(unittest.TestCase):
         dc4_domains_nonmedia = ws_domains_for(4, False)
         self.assertEqual(dc4_domains_nonmedia[0], "kws4.web.telegram.org")
 
-        # DC 2: kws2-1 must be first because it is the responsive web endpoint
+        # DC 2: kws2 must be first for non-media (auth/sync), kws2-1 for media
         dc2_domains = ws_domains_for(2, False)
-        self.assertEqual(dc2_domains[0], "kws2-1.web.telegram.org")
+        self.assertEqual(dc2_domains[0], "kws2.web.telegram.org")
 
         dc2_domains_media = ws_domains_for(2, True)
         self.assertEqual(dc2_domains_media[0], "kws2-1.web.telegram.org")

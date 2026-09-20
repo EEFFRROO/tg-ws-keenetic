@@ -146,9 +146,10 @@ async def bridge_ws(
     dc_tag = f"DC{dc}{'m' if is_media else ''}"
     start = asyncio.get_running_loop().time()
     up_bytes = down_bytes = up_packets = down_packets = 0
+    close_reason = "normal"
 
     async def client_to_upstream() -> None:
-        nonlocal up_bytes, up_packets
+        nonlocal up_bytes, up_packets, close_reason
         try:
             while True:
                 chunk = await client_reader.read(65536)
@@ -174,17 +175,22 @@ async def bridge_ws(
                         await ws.send(parts[0])
                 else:
                     await ws.send(reencrypted)
-        except (asyncio.CancelledError, ConnectionError, OSError):
+        except asyncio.CancelledError:
             return
+        except (ConnectionError, OSError) as exc:
+            close_reason = f"client: {type(exc).__name__}"
         except Exception as exc:
+            close_reason = f"client: {type(exc).__name__}: {exc}"
             log.debug("[%s] tcp->ws ended: %s", label, exc)
 
     async def upstream_to_client() -> None:
-        nonlocal down_bytes, down_packets
+        nonlocal down_bytes, down_packets, close_reason
         try:
             while True:
                 data = await ws.recv()
                 if data is None:
+                    if close_reason == "normal":
+                        close_reason = "upstream: ws_close"
                     break
                 down_bytes += len(data)
                 down_packets += 1
@@ -194,9 +200,12 @@ async def bridge_ws(
                 )
                 client_writer.write(reencrypted)
                 await client_writer.drain()
-        except (asyncio.CancelledError, ConnectionError, OSError):
+        except asyncio.CancelledError:
             return
+        except (ConnectionError, OSError) as exc:
+            close_reason = f"upstream: {type(exc).__name__}"
         except Exception as exc:
+            close_reason = f"upstream: {type(exc).__name__}: {exc}"
             log.debug("[%s] ws->tcp ended: %s", label, exc)
 
     tasks = [
@@ -215,9 +224,10 @@ async def bridge_ws(
                 pass
         elapsed = asyncio.get_running_loop().time() - start
         log.info(
-            "[%s] %s WS closed: ^%s (%d) v%s (%d) in %.1fs",
+            "[%s] %s WS closed (%s): ^%s (%d) v%s (%d) in %.1fs",
             label,
             dc_tag,
+            close_reason,
             human_bytes(up_bytes),
             up_packets,
             human_bytes(down_bytes),

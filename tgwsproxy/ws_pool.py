@@ -28,26 +28,23 @@ def ws_domains_for(dc: int, is_media: Optional[bool]) -> List[str]:
     """Native Telegram WS endpoints. Responsive variants are ordered first."""
     if dc == 203:
         dc = 2
-    # For DC 2, kws2-1 is the responsive web endpoint on the gateway.
-    # For DC 4, kws4 is the responsive web endpoint on 149.154.167.220 (kws4-1 hangs).
+    if not is_media:
+        # Non-media / control sessions: ALWAYS use standard kws{dc} first!
+        # Telegram's main session handles auth, messages, and state sync.
+        return [
+            f"kws{dc}.web.telegram.org",
+            f"kws{dc}-1.web.telegram.org",
+        ]
+    # Media sessions:
     if dc == 4:
+        # On gateway 149.154.167.220, kws4 handles media while kws4-1 hangs
         return [
             f"kws4.web.telegram.org",
             f"kws4-1.web.telegram.org",
         ]
-    if dc == 2:
-        return [
-            f"kws2-1.web.telegram.org",
-            f"kws2.web.telegram.org",
-        ]
-    if is_media:
-        return [
-            f"kws{dc}-1.web.telegram.org",
-            f"kws{dc}.web.telegram.org",
-        ]
     return [
-        f"kws{dc}.web.telegram.org",
         f"kws{dc}-1.web.telegram.org",
+        f"kws{dc}.web.telegram.org",
     ]
 
 
